@@ -25,7 +25,8 @@ stop(_State) ->
 %% Internal functions
 %%====================================================================
 get_endpoint(ZulipServer, EndpointType) ->
-    case EndpointType of messages ->
+    case EndpointType of
+        messages ->
             lists:flatten(io_lib:format("~s/api/v1/messages", [ZulipServer]));
         queue ->
             lists:flatten(io_lib:format("~s/api/v1/register", [ZulipServer]));
@@ -47,8 +48,17 @@ get_basic_authorization_header(Username, Password) ->
     Base64Encoded = base64:encode_to_string(UsernameAndPassword),
     {"Authorization", lists:flatten(io_lib:format("Basic ~s", [Base64Encoded]))}.
 
+get_format_string(T) ->
+    case is_integer(T) of
+        true ->
+            "~w";
+        false ->
+            "~s"
+    end.
+
 format_key_value(K, V) ->
-    io_lib:format("~s=~s", [K, V]).
+    FormatString = "~s=" ++ get_format_string(V),
+    io_lib:format(FormatString, [K, V]).
 
 delimit_key_value_pairs([KeyValuePair|Rest]) ->
     {Key, Value} = KeyValuePair,
@@ -121,9 +131,7 @@ register_message_queue(ZulipServer, Username, Password) ->
                                         "application/x-www-form-urlencoded",
                                         RequestBody}, [], []),
     {_, _, Data} = Response,
-
     RegisterResponse = jsx:decode(list_to_binary(Data)),
-
     [QueueId, LastEventId] = lists:map(fun(X) -> get_key(RegisterResponse, X) end,
                                        [<<"queue_id">>, <<"last_event_id">>]),
     {QueueId, LastEventId}.
@@ -151,9 +159,12 @@ format_message(Sender, Content) ->
     lists:flatten(io_lib:format("~s: ~s", [Sender, Content])).
 
 check_for_messages(ZulipServer, Username, Password, QueueID, LastEventID) ->
-    EventsEndpoint = lists:flatten(io_lib:format("~s?queue_id=~s&last_event_id=~w&dont_block=true",
-                                                 [get_events_endpoint(ZulipServer),
-                                                  QueueID, LastEventID])),
+    QueryString = delimit_key_value_pairs([{"queue_id", QueueID},
+                                           {"last_event_id", LastEventID},
+                                           {"dont_block", "true"}]),
+    EventsEndpoint = lists:flatten(io_lib:format("~s?~s",
+                                                 [get_events_endpoint(
+                                                    ZulipServer), QueryString])),
     Response = make_authorized_request(EventsEndpoint, Username, Password, get),
     Json = jsx:decode(list_to_binary(Response)),
     case get_key(Json, <<"result">>) of
