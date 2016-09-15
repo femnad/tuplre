@@ -100,14 +100,18 @@ start_request() ->
 
 perform_request(URL, Headers) ->
     start_request(),
-    httpc:request(get, {URL, Headers}, [], []).
+    {ok, Response} = httpc:request(get, {URL, Headers}, [], []),
+    {_, _, ResponseBody} = Response,
+    ResponseBody.
 perform_request(URL, Headers, ContentType, Body) ->
     start_request(),
-    httpc:request(post, {URL, Headers, ContentType, Body}, [], []).
+    {ok, Response} = httpc:request(post, {URL, Headers, ContentType, Body}, [], []),
+
+    Response.
 
 authorized_get_request(URL, Username, Password) ->
     AuthorizationHeader = get_basic_authorization_header(Username, Password),
-    perform_request(URL, AuthorizationHeader).
+    perform_request(URL, [AuthorizationHeader]).
 authorized_post_request(URL, ContentType, Body, Username, Password) ->
     AuthorizationHeader = get_basic_authorization_header(Username, Password),
     perform_request(URL, [AuthorizationHeader], ContentType, Body).
@@ -123,7 +127,7 @@ send_stream_message(ZulipServer, Username, Password, Stream, Subject, Message) -
 register_message_queue(ZulipServer, Username, Password) ->
     RequestBody = lists:flatten("event_types=[\"message\"]"),
     QueueEndpoint = get_queue_endpoint(ZulipServer),
-    {ok, Response} = authorized_post_request(QueueEndpoint, ?FORM_CONTENT_TYPE,
+    Response = authorized_post_request(QueueEndpoint, ?FORM_CONTENT_TYPE,
                                              RequestBody, Username, Password),
     {_, _, Data} = Response,
     RegisterResponse = jsx:decode(list_to_binary(Data)),
