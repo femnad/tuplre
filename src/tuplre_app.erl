@@ -7,6 +7,9 @@
 
 -behaviour(application).
 
+-define(FORM_CONTENT_TYPE, "application/x-www-form-urlencoded").
+-define(JSON_CONTENT_TYPE, "application/json").
+
 %% Application callbacks
 -export([start/2, stop/1, send_private_message/5, send_stream_message/6, message_loop/3]).
 
@@ -42,11 +45,6 @@ get_queue_endpoint(ZulipServer) ->
 
 get_events_endpoint(ZulipServer) ->
     get_endpoint(ZulipServer, events).
-
-get_basic_authorization_header(Username, Password) ->
-    UsernameAndPassword = lists:flatten(io_lib:format("~s:~s", [Username, Password])),
-    Base64Encoded = base64:encode_to_string(UsernameAndPassword),
-    {"Authorization", lists:flatten(io_lib:format("Basic ~s", [Base64Encoded]))}.
 
 get_format_string(T) ->
     case is_integer(T) of
@@ -84,24 +82,33 @@ get_request_body(MessageComponents) ->
     end.
 
 send_message(ZulipServer, Username, Password, MessageComponents) ->
-    inets:start(),
-    ssl:start(),
     AuthorizationHeader = get_basic_authorization_header(Username, Password),
     RequestBody = get_request_body(MessageComponents),
     perform_request(post, get_messages_endpoint(ZulipServer),
-                    [AuthorizationHeader], "application/x-www-form-urlencoded",
+                    [AuthorizationHeader], ?FORM_CONTENT_TYPE,
                     RequestBody).
+
+%% httpc API
+
+get_basic_authorization_header(Username, Password) ->
+    UsernameAndPassword = lists:flatten(io_lib:format("~s:~s", [Username, Password])),
+    Base64Encoded = base64:encode_to_string(UsernameAndPassword),
+    {"Authorization", lists:flatten(io_lib:format("Basic ~s", [Base64Encoded]))}.
 
 perform_request(Method, URL, Headers, ContentType, Body) ->
     inets:start(),
     ssl:start(),
-    Result = httpc:request(Method, {URL, Headers, ContentType, Body}, [], []),
-    case Result of
-        {ok, Response} ->
-            Response;
-        {error, Response} ->
-            {error, Response}
-    end.
+    httpc:request(Method, {URL, Headers, ContentType, Body}, [], []).
+
+make_authorized_request(URL, Method, Username, Password) ->
+    make_authorized_request(URL, Method, ?JSON_CONTENT_TYPE, [], Username, Password).
+make_authorized_request(URL, Method, ContentType, Body, Username, Password) ->
+    make_authorized_request(URL, Method, [], ContentType, Body, Username, Password).
+make_authorized_request(URL, Method, Headers, ContentType, Body, Username, Password) ->
+    AuthorizationHeader = get_basic_authorization_header(Username, Password),
+    perform_request(URL, Method, [AuthorizationHeader|Headers], ContentType, Body).
+
+%% end of httpc API
 
 send_private_message(ZulipServer, Username, Password, Recipient, Message) ->
     send_message(ZulipServer, Username, Password, {Recipient, Message}).
@@ -109,27 +116,12 @@ send_private_message(ZulipServer, Username, Password, Recipient, Message) ->
 send_stream_message(ZulipServer, Username, Password, Stream, Subject, Message) ->
     send_message(ZulipServer, Username, Password, {Stream, Subject, Message}).
 
-make_authorized_request(Endpoint, Username, Password, Method) ->
-    inets:start(),
-    ssl:start(),
-    AuthorizationHeader = get_basic_authorization_header(Username, Password),
-    case Method of get ->
-            {ok, {_, _, Data}} = httpc:request(get, {Endpoint, [AuthorizationHeader]}, [], []),
-            Data;
-        _ ->
-            hi
-    end.
-
 register_message_queue(ZulipServer, Username, Password) ->
-    inets:start(),
-    ssl:start(),
-    AuthorizationHeader = get_basic_authorization_header(Username, Password),
     RequestBody = lists:flatten("event_types=[\"message\"]"),
     QueueEndpoint = get_queue_endpoint(ZulipServer),
-    {ok, Response} = httpc:request(post, {QueueEndpoint,
-                                        [AuthorizationHeader],
-                                        "application/x-www-form-urlencoded",
-                                        RequestBody}, [], []),
+    {ok, Response} = make_authorized_request(post, QueueEndpoint,
+                                             ?FORM_CONTENT_TYPE, RequestBody,
+                                             Username, Password),
     {_, _, Data} = Response,
     RegisterResponse = jsx:decode(list_to_binary(Data)),
     [QueueId, LastEventId] = lists:map(fun(X) -> get_key(RegisterResponse, X) end,
@@ -165,7 +157,7 @@ check_for_messages(ZulipServer, Username, Password, QueueID, LastEventID) ->
     EventsEndpoint = lists:flatten(io_lib:format("~s?~s",
                                                  [get_events_endpoint(
                                                     ZulipServer), QueryString])),
-    Response = make_authorized_request(EventsEndpoint, Username, Password, get),
+    Response = make_authorized_request(EventsEndpoint, get, Username, Password),
     Json = jsx:decode(list_to_binary(Response)),
     case get_key(Json, <<"result">>) of
         <<"error">> ->
@@ -188,7 +180,11 @@ message_loop(ZulipServer, Username, Password) ->
     message_loop(ZulipServer, Username, Password, QueueID, LastEventID).
 
 message_loop(ZulipServer, Username, Password, QueueID, LastEventID) ->
-    MessagesWithIds = check_for_messages(ZulipServer, Username, Password, QueueID, LastEventID),
-    LastMessageId = consume_messages(MessagesWithIds, LastEventID),
-    timer:sleep(1000),
-    message_loop(ZulipServer, Username, Password, QueueID, LastMessageId).
+    receive
+        _ ->
+            ok
+    after 1000 ->
+            MessagesWithIds = check_for_messages(ZulipServer, Username, Password, QueueID, LastEventID),
+            LastMessageId = consume_messages(MessagesWithIds, LastEventID),
+            message_loop(ZulipServer, Username, Password, QueueID, LastMessageId)
+    end.
