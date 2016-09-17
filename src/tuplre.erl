@@ -3,26 +3,27 @@
 %% @end
 %%%-------------------------------------------------------------------
 
--module(tuplre_app).
-
--behaviour(application).
+-module(tuplre).
 
 -define(FORM_CONTENT_TYPE, "application/x-www-form-urlencoded").
--define(JSON_CONTENT_TYPE, "application/json").
 
 %% Application callbacks
--export([start/2, stop/1, send_private_message/5, send_stream_message/6, message_loop/3]).
+-export([send_private_message/5, send_stream_message/6, message_loop/3]).
 
 %%====================================================================
 %% API
 %%====================================================================
 
-start(_StartType, _StartArgs) ->
-    tuplre_sup:start_link().
+message_loop(ZulipServer, Username, Password) ->
+    io:format("Started message loop~n"),
+    {QueueID, LastEventID} = register_message_queue(ZulipServer, Username, Password),
+    message_loop(ZulipServer, Username, Password, QueueID, LastEventID).
 
-%%--------------------------------------------------------------------
-stop(_State) ->
-    ok.
+send_private_message(ZulipServer, Username, Password, Recipient, Message) ->
+    send_message(ZulipServer, Username, Password, {Recipient, Message}).
+
+send_stream_message(ZulipServer, Username, Password, Stream, Subject, Message) ->
+    send_message(ZulipServer, Username, Password, {Stream, Subject, Message}).
 
 %%====================================================================
 %% Internal functions
@@ -87,7 +88,9 @@ send_message(ZulipServer, Username, Password, MessageComponents) ->
     authorized_post_request(MessagesEndpoint, ?FORM_CONTENT_TYPE, RequestBody,
                             Username, Password).
 
+%%====================================================================
 %% httpc API
+%%====================================================================
 
 get_basic_authorization_header(Username, Password) ->
     UsernameAndPassword = lists:flatten(io_lib:format("~s:~s", [Username, Password])),
@@ -116,13 +119,9 @@ authorized_post_request(URL, ContentType, Body, Username, Password) ->
     AuthorizationHeader = get_basic_authorization_header(Username, Password),
     perform_request(URL, [AuthorizationHeader], ContentType, Body).
 
-%% end of httpc API
-
-send_private_message(ZulipServer, Username, Password, Recipient, Message) ->
-    send_message(ZulipServer, Username, Password, {Recipient, Message}).
-
-send_stream_message(ZulipServer, Username, Password, Stream, Subject, Message) ->
-    send_message(ZulipServer, Username, Password, {Stream, Subject, Message}).
+%%====================================================================
+%% End of httpc API
+%%====================================================================
 
 register_message_queue(ZulipServer, Username, Password) ->
     RequestBody = lists:flatten("event_types=[\"message\"]"),
@@ -180,11 +179,6 @@ consume_messages([{MessageID, Message} | Rest], _) ->
     consume_messages(Rest, MessageID);
 consume_messages([], MessageID) ->
     MessageID.
-
-message_loop(ZulipServer, Username, Password) ->
-    io:format("Started message loop~n"),
-    {QueueID, LastEventID} = register_message_queue(ZulipServer, Username, Password),
-    message_loop(ZulipServer, Username, Password, QueueID, LastEventID).
 
 message_loop(ZulipServer, Username, Password, QueueID, LastEventID) ->
     receive
