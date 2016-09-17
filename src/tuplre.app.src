@@ -1,8 +1,7 @@
 {application, tuplre,
- [{description, "An OTP application"},
+ [{description, "An OTP library"},
   {vsn, "0.1.0"},
   {registered, []},
-  {mod, { tuplre_app, []}},
   {applications,
    [kernel,
     stdlib
