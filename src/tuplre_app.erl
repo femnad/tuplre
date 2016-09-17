@@ -106,8 +106,8 @@ perform_request(URL, Headers) ->
 perform_request(URL, Headers, ContentType, Body) ->
     start_request(),
     {ok, Response} = httpc:request(post, {URL, Headers, ContentType, Body}, [], []),
-
-    Response.
+    {_, _, ResponseBody} = Response,
+    ResponseBody.
 
 authorized_get_request(URL, Username, Password) ->
     AuthorizationHeader = get_basic_authorization_header(Username, Password),
@@ -129,8 +129,8 @@ register_message_queue(ZulipServer, Username, Password) ->
     QueueEndpoint = get_queue_endpoint(ZulipServer),
     Response = authorized_post_request(QueueEndpoint, ?FORM_CONTENT_TYPE,
                                              RequestBody, Username, Password),
-    {_, _, Data} = Response,
-    RegisterResponse = jsx:decode(list_to_binary(Data)),
+    JsonString = list_to_binary(Response),
+    RegisterResponse = jsx:decode(JsonString),
     [QueueId, LastEventId] = lists:map(fun(X) -> get_key(RegisterResponse, X) end,
                                        [<<"queue_id">>, <<"last_event_id">>]),
     {QueueId, LastEventId}.
