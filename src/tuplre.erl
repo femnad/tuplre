@@ -15,9 +15,9 @@
 %%====================================================================
 
 message_loop(ZulipServer, Username, Password) ->
-    io:format("Started message loop~n"),
     {QueueID, LastEventID} = register_message_queue(ZulipServer, Username, Password),
-    message_loop(ZulipServer, Username, Password, QueueID, LastEventID).
+    Streams = get_streams(ZulipServer, Username, Password),
+    message_loop(ZulipServer, Username, Password, QueueID, LastEventID, Streams).
 
 send_private_message(ZulipServer, Username, Password, Recipient, Message) ->
     send_message(ZulipServer, Username, Password, {Recipient, Message}).
@@ -30,12 +30,11 @@ send_stream_message(ZulipServer, Username, Password, Stream, Subject, Message) -
 %%====================================================================
 get_endpoint(ZulipServer, EndpointType) ->
     case EndpointType of
-        messages ->
-            lists:flatten(io_lib:format("~s/api/v1/messages", [ZulipServer]));
         queue ->
             lists:flatten(io_lib:format("~s/api/v1/register", [ZulipServer]));
-        events ->
-            lists:flatten(io_lib:format("~s/api/v1/events", [ZulipServer]))
+        _ ->
+            lists:flatten(io_lib:format("~s/api/v1/~s",
+                                        [ZulipServer, atom_to_list(EndpointType)]))
     end.
 
 get_messages_endpoint(ZulipServer) ->
@@ -149,12 +148,26 @@ get_message_with_id(Event) ->
     {ID, Message}.
 
 get_message(Message) ->
-    [SenderShortName, Content] = lists:map(fun(X) -> get_key(Message, X) end,
-                                                      [<<"sender_short_name">>, <<"content">>]),
-    {SenderShortName, Content}.
+    [SenderShortName, StreamId, Subject, Content] = lists:map(fun(X) -> get_key(Message, X) end,
+                                                    [<<"sender_short_name">>,
+                                                     <<"recipient_id">>,
+                                                     <<"subject">>,
+                                                     <<"content">>]),
+    {SenderShortName, StreamId, Subject, Content}.
 
-format_message(Sender, Content) ->
-    lists:flatten(io_lib:format("~s: ~s", [Sender, Content])).
+get_stream_name([Stream|Rest], StreamId) ->
+    case get_key(Stream, <<"stream_id">>) == StreamId of
+        true ->
+            get_key(Stream, <<"name">>);
+        false ->
+            get_stream_name(Rest, StreamId)
+    end;
+get_stream_name([], _) ->
+    notfound.
+
+format_message(Sender, Stream, Subject, Content) ->
+    lists:flatten(io_lib:format("~s > ~s [~s]: ~s",
+                                [Sender, Stream, Subject, Content])).
 
 check_for_messages(ZulipServer, Username, Password, QueueID, LastEventID) ->
     QueryString = delimit_key_value_pairs([{"queue_id", QueueID},
@@ -167,25 +180,34 @@ check_for_messages(ZulipServer, Username, Password, QueueID, LastEventID) ->
     Json = jsx:decode(list_to_binary(Response)),
     case get_key(Json, <<"result">>) of
         <<"error">> ->
-            {error, get_key(Json, <<"msg">>)};
+            %% Bad event queue id
+            {QueueId, LastEventId} = register_message_queue(ZulipServer, Username, Password),
+            check_for_messages(ZulipServer, Username, Password, QueueId, LastEventId);
         _ ->
             Events = get_key(Json, <<"events">>),
             lists:map(fun get_message_with_id/1, Events)
     end.
 
-consume_messages([{MessageID, Message} | Rest], _) ->
-    {Sender, Content} = get_message(Message),
-    io:format("~s~n", [format_message(Sender, Content)]),
-    consume_messages(Rest, MessageID);
-consume_messages([], MessageID) ->
+consume_messages(Streams, [{MessageID, Message} | Rest], _) ->
+    {Sender, StreamId, Subject, Content} = get_message(Message),
+    StreamName = get_stream_name(Streams, StreamId),
+    io:format("~s~n", [format_message(Sender, StreamName, Subject, Content)]),
+    consume_messages(Streams, Rest, MessageID);
+consume_messages(_Streams, [], MessageID) ->
     MessageID.
 
-message_loop(ZulipServer, Username, Password, QueueID, LastEventID) ->
+message_loop(ZulipServer, Username, Password, QueueID, LastEventID, Streams) ->
     receive
         _ ->
             ok
     after 1000 ->
             MessagesWithIds = check_for_messages(ZulipServer, Username, Password, QueueID, LastEventID),
-            LastMessageId = consume_messages(MessagesWithIds, LastEventID),
-            message_loop(ZulipServer, Username, Password, QueueID, LastMessageId)
+            LastMessageId = consume_messages(Streams, MessagesWithIds, LastEventID),
+            message_loop(ZulipServer, Username, Password, QueueID, LastMessageId, Streams)
     end.
+
+get_streams(ZulipServer, Username, Password) ->
+    StreamsEndpoint = get_endpoint(ZulipServer, streams),
+    StreamsString = authorized_get_request(StreamsEndpoint, Username, Password),
+    StreamsJson = jsx:decode(list_to_binary(StreamsString)),
+    get_key(StreamsJson, <<"streams">>).
