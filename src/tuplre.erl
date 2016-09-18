@@ -1,18 +1,25 @@
-%%%-------------------------------------------------------------------
-%% @doc tuplre public API
-%% @end
-%%%-------------------------------------------------------------------
-
 -module(tuplre).
-
+-compile(export_all).
+-define(CREDENTIALS_FILE, "~/.tuplrerc").
 -define(FORM_CONTENT_TYPE, "application/x-www-form-urlencoded").
 
 %% Application callbacks
--export([send_private_message/5, send_stream_message/6, message_loop/3]).
+-export([main/1]).
 
 %%====================================================================
 %% API
 %%====================================================================
+main(_Args) ->
+    {Server, Email, Key} = get_credentials(?CREDENTIALS_FILE),
+    message_loop(Server, Email, Key),
+    erlang:halt(0).
+
+get_credentials(File) ->
+    CredentialsFile = expand_user(File),
+    {ok, Credentials} = file:consult(CredentialsFile),
+    [Credential | _] = Credentials,
+    [Server, Email, Key] = lists:map(fun(X) -> proplists:get_value(X, Credential) end, [server, email, key]),
+    {Server, Email, Key}.
 
 message_loop(ZulipServer, Username, Password) ->
     {QueueID, LastEventID} = register_message_queue(ZulipServer, Username, Password),
@@ -28,6 +35,10 @@ send_stream_message(ZulipServer, Username, Password, Stream, Subject, Message) -
 %%====================================================================
 %% Internal functions
 %%====================================================================
+expand_user(Path) ->
+    UserHome = os:getenv("HOME"),
+    re:replace(Path, "^~", UserHome, [{return, list}]).
+
 get_endpoint(ZulipServer, EndpointType) ->
     case EndpointType of
         queue ->
