@@ -10,16 +10,25 @@
 %% API
 %%====================================================================
 main(_Args) ->
-    {Server, Email, Key} = get_credentials(?CREDENTIALS_FILE),
-    message_loop(Server, Email, Key),
+    case get_credentials(?CREDENTIALS_FILE) of
+        {Server, Email, Key} ->
+            message_loop(Server, Email, Key);
+        file_not_found ->
+            io:format("Unable to find credentials file in path ~s~n",
+                      [?CREDENTIALS_FILE])
+    end,
     erlang:halt(0).
 
 get_credentials(File) ->
     CredentialsFile = expand_user(File),
-    {ok, Credentials} = file:consult(CredentialsFile),
-    [Credential | _] = Credentials,
-    [Server, Email, Key] = lists:map(fun(X) -> proplists:get_value(X, Credential) end, [server, email, key]),
-    {Server, Email, Key}.
+    case file:consult(CredentialsFile) of
+        {ok, Credentials} ->
+            [Credential | _] = Credentials,
+            [Server, Email, Key] = lists:map(fun(X) -> proplists:get_value(X, Credential) end, [server, email, key]),
+            {Server, Email, Key};
+        {error, enoent} ->
+            file_not_found
+    end.
 
 message_loop(ZulipServer, Username, Password) ->
     {QueueID, LastEventID} = register_message_queue(ZulipServer, Username, Password),
