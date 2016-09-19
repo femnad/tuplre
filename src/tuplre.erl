@@ -3,7 +3,8 @@
 -define(FORM_CONTENT_TYPE, "application/x-www-form-urlencoded").
 
 %% Application callbacks
--export([main/1]).
+-export([main/1, send_private_message/5, send_stream_message/6,
+         subscribe_to_streams/4, get_streams/3, get_subscriptions/3]).
 
 %%====================================================================
 %% API
@@ -23,7 +24,10 @@ get_credentials(File) ->
     case file:consult(CredentialsFile) of
         {ok, Credentials} ->
             [Credential | _] = Credentials,
-            [Server, Email, Key] = lists:map(fun(X) -> proplists:get_value(X, Credential) end, [server, email, key]),
+            [Server, Email, Key] = lists:map(
+                                     fun(X) ->
+                                             proplists:get_value(X, Credential)
+                                     end, [server, email, key]),
             {Server, Email, Key};
         {error, enoent} ->
             file_not_found
@@ -178,19 +182,6 @@ get_message(Message) ->
                                                      <<"content">>]),
     {SenderShortName, StreamName, Subject, Content}.
 
-get_stream_name([Stream|Rest], StreamId) ->
-    StreamDict = dict:from_list(Stream),
-    {ok, Id} = dict:find(<<"stream_id">>, StreamDict),
-    case Id == StreamId of
-        true ->
-            {ok, StreamName} = dict:find(<<"name">>, StreamDict),
-            binary_to_list(StreamName);
-        false ->
-            get_stream_name(Rest, StreamId)
-    end;
-get_stream_name([], _) ->
-    notfound.
-
 format_message(Sender, Stream, Subject, Content) ->
     lists:flatten(io_lib:format("~s > ~s [~s]: ~s",
                                 [Sender, Stream, Subject, Content])).
@@ -207,8 +198,7 @@ check_for_messages(ZulipServer, Username, Password, QueueID, LastEventID) ->
     case get_key(Json, <<"result">>) of
         <<"error">> ->
             %% Bad event queue id
-            {QueueId, LastEventId} = register_message_queue(ZulipServer, Username, Password),
-            check_for_messages(ZulipServer, Username, Password, QueueId, LastEventId);
+            erlang:error("Invalid queue ID");
         _ ->
             Events = get_key(Json, <<"events">>),
             lists:map(fun get_message_with_id/1, Events)
@@ -226,9 +216,17 @@ message_loop(ZulipServer, Username, Password, QueueID, LastEventID) ->
         _ ->
             ok
     after 1000 ->
-            MessagesWithIds = check_for_messages(ZulipServer, Username, Password, QueueID, LastEventID),
-            LastMessageId = consume_messages(MessagesWithIds, LastEventID),
-            message_loop(ZulipServer, Username, Password, QueueID, LastMessageId)
+            try check_for_messages(ZulipServer, Username, Password, QueueID,
+                                   LastEventID) of
+                MessagesWithIds ->
+                    LastMessageId = consume_messages(MessagesWithIds,
+                                                     LastEventID),
+                    message_loop(ZulipServer, Username, Password, QueueID,
+                                 LastMessageId)
+            catch
+                error:_Error ->
+                    message_loop(ZulipServer, Username, Password)
+            end
     end.
 
 get_streams(ZulipServer, Username, Password) ->
@@ -243,6 +241,13 @@ get_subscription_body([StreamName|StreamNames], Acc) ->
     get_subscription_body(StreamNames, [[{<<"name">>, list_to_binary(StreamName)}]|Acc]);
 get_subscription_body([], Acc) ->
     jsx:encode(Acc).
+
+get_subscriptions(ZulipServer, Username, Password) ->
+    SubscriptionsEndpoint = get_endpoint(ZulipServer, subscription),
+    Response = authorized_get_request(SubscriptionsEndpoint, Username, Password),
+    JsonResponse = jsx:decode(list_to_binary(Response)),
+    Subscriptions = get_key(JsonResponse, <<"subscriptions">>),
+    [get_key(X, <<"name">>) || X <- Subscriptions].
 
 subscribe_to_streams(ZulipServer, Username, Password, StreamNames) ->
     SubscriptionsEndpoint = get_endpoint(ZulipServer, subscription),
