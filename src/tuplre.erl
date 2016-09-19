@@ -1,5 +1,4 @@
 -module(tuplre).
--compile(export_all).
 -define(CREDENTIALS_FILE, "~/.tuplrerc").
 -define(FORM_CONTENT_TYPE, "application/x-www-form-urlencoded").
 
@@ -48,13 +47,16 @@ expand_user(Path) ->
     re:replace(Path, "^~", UserHome, [{return, list}]).
 
 get_endpoint(ZulipServer, EndpointType) ->
-    case EndpointType of
-        queue ->
-            lists:flatten(io_lib:format("~s/api/v1/register", [ZulipServer]));
-        _ ->
-            lists:flatten(io_lib:format("~s/api/v1/~s",
-                                        [ZulipServer, atom_to_list(EndpointType)]))
-    end.
+    ApiPrefix = "/api/v1/",
+    EndpointSuffix = case EndpointType of
+                         queue ->
+                             "register";
+                         subscription ->
+                             "users/me/subscriptions";
+                         _ ->
+                             atom_to_list(EndpointType)
+                     end,
+    lists:flatten(io_lib:format("~s~s~s", [ZulipServer, ApiPrefix, EndpointSuffix])).
 
 get_messages_endpoint(ZulipServer) ->
     get_endpoint(ZulipServer, messages).
@@ -136,6 +138,8 @@ authorized_get_request(URL, Username, Password) ->
 authorized_post_request(URL, ContentType, Body, Username, Password) ->
     AuthorizationHeader = get_basic_authorization_header(Username, Password),
     perform_request(URL, [AuthorizationHeader], ContentType, Body).
+authorized_post_request(URL, Body, Username, Password) ->
+    authorized_post_request(URL, ?FORM_CONTENT_TYPE, Body, Username, Password).
 
 %%====================================================================
 %% End of httpc API
@@ -232,3 +236,17 @@ get_streams(ZulipServer, Username, Password) ->
     StreamsString = authorized_get_request(StreamsEndpoint, Username, Password),
     StreamsJson = jsx:decode(list_to_binary(StreamsString)),
     get_key(StreamsJson, <<"streams">>).
+
+get_subscription_body([StreamName|StreamNames]) ->
+    get_subscription_body(StreamNames, [[{<<"name">>, list_to_binary(StreamName)}]]).
+get_subscription_body([StreamName|StreamNames], Acc) ->
+    get_subscription_body(StreamNames, [[{<<"name">>, list_to_binary(StreamName)}]|Acc]);
+get_subscription_body([], Acc) ->
+    jsx:encode(Acc).
+
+subscribe_to_streams(ZulipServer, Username, Password, StreamNames) ->
+    SubscriptionsEndpoint = get_endpoint(ZulipServer, subscription),
+    RequestBody = lists:flatten(
+                    io_lib:format(
+                      "subscriptions=~s", [get_subscription_body(StreamNames)])),
+    authorized_post_request(SubscriptionsEndpoint, RequestBody, Username, Password).
