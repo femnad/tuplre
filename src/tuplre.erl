@@ -32,8 +32,7 @@ get_credentials(File) ->
 
 message_loop(ZulipServer, Username, Password) ->
     {QueueID, LastEventID} = register_message_queue(ZulipServer, Username, Password),
-    Streams = get_streams(ZulipServer, Username, Password),
-    message_loop(ZulipServer, Username, Password, QueueID, LastEventID, Streams).
+    message_loop(ZulipServer, Username, Password, QueueID, LastEventID).
 
 send_private_message(ZulipServer, Username, Password, Recipient, Message) ->
     send_message(ZulipServer, Username, Password, {Recipient, Message}).
@@ -168,17 +167,20 @@ get_message_with_id(Event) ->
     {ID, Message}.
 
 get_message(Message) ->
-    [SenderShortName, StreamId, Subject, Content] = lists:map(fun(X) -> get_key(Message, X) end,
+    [SenderShortName, StreamName, Subject, Content] = lists:map(fun(X) -> get_key(Message, X) end,
                                                     [<<"sender_short_name">>,
-                                                     <<"recipient_id">>,
+                                                     <<"display_recipient">>,
                                                      <<"subject">>,
                                                      <<"content">>]),
-    {SenderShortName, StreamId, Subject, Content}.
+    {SenderShortName, StreamName, Subject, Content}.
 
 get_stream_name([Stream|Rest], StreamId) ->
-    case get_key(Stream, <<"stream_id">>) == StreamId of
+    StreamDict = dict:from_list(Stream),
+    {ok, Id} = dict:find(<<"stream_id">>, StreamDict),
+    case Id == StreamId of
         true ->
-            get_key(Stream, <<"name">>);
+            {ok, StreamName} = dict:find(<<"name">>, StreamDict),
+            binary_to_list(StreamName);
         false ->
             get_stream_name(Rest, StreamId)
     end;
@@ -208,22 +210,21 @@ check_for_messages(ZulipServer, Username, Password, QueueID, LastEventID) ->
             lists:map(fun get_message_with_id/1, Events)
     end.
 
-consume_messages(Streams, [{MessageID, Message} | Rest], _) ->
-    {Sender, StreamId, Subject, Content} = get_message(Message),
-    StreamName = get_stream_name(Streams, StreamId),
+consume_messages([{MessageID, Message} | Rest], _) ->
+    {Sender, StreamName, Subject, Content} = get_message(Message),
     io:format("~s~n", [format_message(Sender, StreamName, Subject, Content)]),
-    consume_messages(Streams, Rest, MessageID);
-consume_messages(_Streams, [], MessageID) ->
+    consume_messages(Rest, MessageID);
+consume_messages([], MessageID) ->
     MessageID.
 
-message_loop(ZulipServer, Username, Password, QueueID, LastEventID, Streams) ->
+message_loop(ZulipServer, Username, Password, QueueID, LastEventID) ->
     receive
         _ ->
             ok
     after 1000 ->
             MessagesWithIds = check_for_messages(ZulipServer, Username, Password, QueueID, LastEventID),
-            LastMessageId = consume_messages(Streams, MessagesWithIds, LastEventID),
-            message_loop(ZulipServer, Username, Password, QueueID, LastMessageId, Streams)
+            LastMessageId = consume_messages(MessagesWithIds, LastEventID),
+            message_loop(ZulipServer, Username, Password, QueueID, LastMessageId)
     end.
 
 get_streams(ZulipServer, Username, Password) ->
