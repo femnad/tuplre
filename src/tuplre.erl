@@ -184,8 +184,8 @@ get_message(Message) ->
     {SenderShortName, StreamName, Subject, Content}.
 
 format_message(Sender, Stream, Subject, Content) ->
-    lists:flatten(io_lib:format("~s > ~s [~s]: ~s",
-                                [Sender, Stream, Subject, Content])).
+    lists:flatten(io_lib:format("~s > ~s~n~s~n~s",
+                                [Stream, Subject, Sender, Content])).
 
 check_for_messages(ZulipServer, Username, Password, QueueID, LastEventID) ->
     QueryString = delimit_key_value_pairs([{"queue_id", QueueID},
