@@ -175,11 +175,12 @@ get_message_with_id(Event) ->
     {ID, Message}.
 
 get_message(Message) ->
-    [SenderShortName, StreamName, Subject, Content] = lists:map(fun(X) -> get_key(Message, X) end,
-                                                    [<<"sender_short_name">>,
-                                                     <<"display_recipient">>,
-                                                     <<"subject">>,
-                                                     <<"content">>]),
+    [SenderShortName, StreamName, Subject, Content] = lists:map(
+                                                        fun(X) -> get_key(Message, X) end,
+                                                        [<<"sender_full_name">>,
+                                                         <<"display_recipient">>,
+                                                         <<"subject">>,
+                                                         <<"content">>]),
     {SenderShortName, StreamName, Subject, Content}.
 
 format_message(Sender, Stream, Subject, Content) ->
