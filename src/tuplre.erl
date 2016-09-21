@@ -4,14 +4,38 @@
 
 %% Application callbacks
 -export([main/1, send_private_message/5, send_stream_message/6,
-         subscribe_to_streams/4, get_streams/3, get_subscriptions/3]).
+         subscribe_to_streams/4, get_streams/3, get_subscriptions/3,
+        display_messages/0, print_message/1]).
 
 %%====================================================================
 %% API
 %%====================================================================
+colorize(String, Color) ->
+    EscapeCode = case Color of
+                     red ->
+                         31;
+                     green ->
+                         32;
+                     yellow ->
+                         33;
+                     blue ->
+                         34;
+                     magenta ->
+                         35;
+                     cyan ->
+                         36;
+                     white ->
+                         37;
+                     _ ->
+                         30
+                 end,
+    io_lib:format("\033[0;~Bm~s\033[0;0m", [EscapeCode, String]).
+
 main(_Args) ->
     case get_credentials(?CREDENTIALS_FILE) of
         {Server, Email, Key} ->
+            DisplayerPid = spawn(?MODULE, display_messages, []),
+            register(displayer, DisplayerPid),
             message_loop(Server, Email, Key);
         file_not_found ->
             io:format("Unable to find credentials file in path ~s~n",
@@ -175,17 +199,58 @@ get_message_with_id(Event) ->
     {ID, Message}.
 
 get_message(Message) ->
-    [SenderShortName, StreamName, Subject, Content] = lists:map(
+    [Sender, StreamName, Subject, Content] = lists:map(
                                                         fun(X) -> get_key(Message, X) end,
                                                         [<<"sender_full_name">>,
                                                          <<"display_recipient">>,
                                                          <<"subject">>,
                                                          <<"content">>]),
-    {SenderShortName, StreamName, Subject, Content}.
+    {Sender, StreamName, Subject, Content}.
+
+get_format_list(Omissions, MessageComponents, Acc) ->
+    case Omissions of
+        [] ->
+            lists:reverse([hd(MessageComponents)|Acc]);
+        _ ->
+            [Component|RestComponents] = MessageComponents,
+            [ComponentOmission|RestOmissions] = Omissions,
+            NewAcc = case ComponentOmission of
+                         true ->
+                             Acc;
+                         false ->
+                             [Component|Acc]
+                     end,
+            get_format_list(RestOmissions, RestComponents, NewAcc)
+    end.
+get_format_list(Omissions, MessageComponents) ->
+    get_format_list(Omissions, MessageComponents, []).
+
+get_message_format_string(Omissions, Acc) ->
+    case Omissions of
+        [] ->
+            Acc ++ "~s~n";
+        _ ->
+            [OmitCurrent|OmitRest] = Omissions,
+            NewAcc = case OmitCurrent of
+                         true ->
+                             Acc;
+                         false ->
+                             Acc ++ "~s~n"
+                     end,
+            get_message_format_string(OmitRest, NewAcc)
+    end.
+get_message_format_string(Omissions) ->
+    get_message_format_string(Omissions, "").
 
 format_message(Sender, Stream, Subject, Content) ->
-    lists:flatten(io_lib:format("~s > ~s~n~s~n~s",
-                                [Stream, Subject, Sender, Content])).
+    format_message(Sender, Stream, Subject, Content, [false, false, false]).
+format_message(Sender, Stream, Subject, Content, Omissions) ->
+    FormatList = get_format_list(Omissions, [colorize(Sender, blue),
+                                             colorize(Stream, yellow),
+                                             colorize(Subject, green),
+                                             Content]),
+    FormatSpecifier = get_message_format_string(Omissions),
+    lists:flatten(io_lib:format(FormatSpecifier, FormatList)).
 
 check_for_messages(ZulipServer, Username, Password, QueueID, LastEventID) ->
     QueryString = delimit_key_value_pairs([{"queue_id", QueueID},
@@ -205,9 +270,28 @@ check_for_messages(ZulipServer, Username, Password, QueueID, LastEventID) ->
             lists:map(fun get_message_with_id/1, Events)
     end.
 
+determine_omissions(Sender, Stream, Subject,
+                    NextSender, NextStream, NextSubject) ->
+    [Sender == NextSender, Stream == NextStream, Subject == NextSubject].
+
+print_message(Message) ->
+    print_message(Message, none_before).
+print_message(Message, PrevMessage) ->
+    {Sender, Stream, Subject, Content} = get_message(Message),
+    Formatted_Message = case PrevMessage of
+                            none_before ->
+                                format_message(Sender, Stream, Subject, Content);
+                            _ ->
+                                {PrevSender, PrevStream, PrevSubject, _} = get_message(
+                                                                             PrevMessage),
+                                Omissions = determine_omissions(Sender, Stream, Subject, PrevSender,
+                                                                PrevStream, PrevSubject),
+                                format_message(Sender, Stream, Subject, Content, Omissions)
+                        end,
+    io:format(Formatted_Message).
+
 consume_messages([{MessageID, Message} | Rest], _) ->
-    {Sender, StreamName, Subject, Content} = get_message(Message),
-    io:format("~s~n", [format_message(Sender, StreamName, Subject, Content)]),
+    displayer ! Message,
     consume_messages(Rest, MessageID);
 consume_messages([], MessageID) ->
     MessageID.
@@ -256,3 +340,12 @@ subscribe_to_streams(ZulipServer, Username, Password, StreamNames) ->
                     io_lib:format(
                       "subscriptions=~s", [get_subscription_body(StreamNames)])),
     authorized_post_request(SubscriptionsEndpoint, RequestBody, Username, Password).
+
+display_messages() ->
+    display_messages(none_before).
+display_messages(PreviousMessage) ->
+    receive
+        Message ->
+            print_message(Message, PreviousMessage),
+            display_messages(Message)
+    end.
