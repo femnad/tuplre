@@ -274,6 +274,9 @@ determine_omissions(Sender, Stream, Subject,
                     NextSender, NextStream, NextSubject) ->
     [Sender == NextSender, Stream == NextStream, Subject == NextSubject].
 
+replace_tildes(String) ->
+    re:replace(String, "~", "~~", [{return,list}]).
+
 print_message(Message) ->
     print_message(Message, none_before).
 print_message(Message, PrevMessage) ->
@@ -288,7 +291,7 @@ print_message(Message, PrevMessage) ->
                                                                 PrevStream, PrevSubject),
                                 format_message(Sender, Stream, Subject, Content, Omissions)
                         end,
-    io:format(Formatted_Message).
+    io:format(replace_tildes(Formatted_Message)).
 
 consume_messages([{MessageID, Message} | Rest], _) ->
     displayer ! Message,
