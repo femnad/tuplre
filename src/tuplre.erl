@@ -5,7 +5,7 @@
 %% Application callbacks
 -export([main/1, send_private_message/5, send_stream_message/6,
          subscribe_to_streams/4, get_streams/3, get_subscriptions/3,
-        display_messages/0, print_message/1]).
+         display_messages/0, print_message/1, remove_subscriptions/4]).
 
 %%====================================================================
 %% API
@@ -154,11 +154,13 @@ perform_request(URL, Headers) ->
     {ok, Response} = httpc:request(get, {URL, Headers}, [], []),
     {_, _, ResponseBody} = Response,
     ResponseBody.
-perform_request(URL, Headers, ContentType, Body) ->
+perform_request(URL, Headers, ContentType, Body, Method) ->
     start_request(),
-    {ok, Response} = httpc:request(post, {URL, Headers, ContentType, Body}, [], []),
+    {ok, Response} = httpc:request(Method, {URL, Headers, ContentType, Body}, [], []),
     {_, _, ResponseBody} = Response,
     ResponseBody.
+perform_request(URL, Headers, ContentType, Body) ->
+    perform_request(URL, Headers, ContentType, Body, post).
 
 authorized_get_request(URL, Username, Password) ->
     AuthorizationHeader = get_basic_authorization_header(Username, Password),
@@ -168,6 +170,9 @@ authorized_post_request(URL, ContentType, Body, Username, Password) ->
     perform_request(URL, [AuthorizationHeader], ContentType, Body).
 authorized_post_request(URL, Body, Username, Password) ->
     authorized_post_request(URL, ?FORM_CONTENT_TYPE, Body, Username, Password).
+authorized_patch_request(URL, Body, Username, Password) ->
+    AuthorizationHeader = get_basic_authorization_header(Username, Password),
+    perform_request(URL, [AuthorizationHeader], ?FORM_CONTENT_TYPE, Body, patch).
 
 %%====================================================================
 %% End of httpc API
@@ -352,3 +357,16 @@ display_messages(PreviousMessage) ->
             print_message(Message, PreviousMessage),
             display_messages(Message)
     end.
+
+get_delete_subscriptions_body([Stream|Streams]) ->
+    get_delete_subscriptions_body(Streams, "delete=[\"" ++ Stream ++ "\"").
+get_delete_subscriptions_body([Stream|Streams], Acc) ->
+    get_delete_subscriptions_body(Streams, Acc ++ ",\"" ++ Stream ++ "\"");
+get_delete_subscriptions_body([], Acc) ->
+    Acc ++ "]".
+
+remove_subscriptions(ZulipServer, Username, Password, StreamNames) ->
+    SubscriptionsEndpoint = get_endpoint(ZulipServer, subscription),
+    DeleteSubscriptionsBody = get_delete_subscriptions_body(StreamNames),
+    authorized_patch_request(SubscriptionsEndpoint, DeleteSubscriptionsBody,
+                             Username, Password).
