@@ -355,6 +355,7 @@ display_messages(PreviousMessage) ->
     receive
         Message ->
             print_message(Message, PreviousMessage),
+            notify_message(Message),
             display_messages(Message)
     end.
 
@@ -370,3 +371,12 @@ remove_subscriptions(ZulipServer, Username, Password, StreamNames) ->
     DeleteSubscriptionsBody = get_delete_subscriptions_body(StreamNames),
     authorized_patch_request(SubscriptionsEndpoint, DeleteSubscriptionsBody,
                              Username, Password).
+
+notify_message(Message) ->
+    {Sender, Stream, Subject, Content} = get_message(Message),
+    Header =io_lib:format("~s > ~s [~s]",
+                          lists:map(
+                            fun replace_tildes/1, [Sender, Stream, Subject])),
+    Body = replace_tildes(Content),
+    NotifySendCmd = lists:flatten(io_lib:format("notify-send '~s' '~s'", [Header, Body])),
+    os:cmd(NotifySendCmd).
