@@ -5,7 +5,8 @@
 %% Application callbacks
 -export([main/1, send_private_message/5, send_stream_message/6,
          subscribe_to_streams/4, get_streams/3, get_subscriptions/3,
-         display_messages/0, print_message/1, remove_subscriptions/4]).
+         display_messages/0, print_message/1, remove_subscriptions/4,
+         get_credentials/1]).
 
 %%====================================================================
 %% API
